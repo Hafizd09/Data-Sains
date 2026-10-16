@@ -32,7 +32,8 @@ footer{font-size:11px;color:var(--muted);padding:20px 0 5px}
 <button class="nav active" data-page="dashboard">▦ Dashboard <small>Ringkasan data dan visualisasi</small></button>
 <button class="nav" data-page="eda">▥ EDA & Kualitas Data <small>Eksplorasi dan preprocessing</small></button>
 <button class="nav" data-page="model">◉ Machine Learning <small>K-Means dan Hierarchical</small></button>
-<button class="nav" data-page="evaluasi">✓ Evaluasi Model <small>Elbow dan Silhouette</small></button>
+<button class="nav" data-page="evaluasi">✓ Evaluasi Clustering <small>Elbow dan Silhouette</small></button>
+<button class="nav" data-page="regresi">∿ Linear Regression <small>Prediksi PKH dari BPNT</small></button>
 <button class="nav" data-page="wilayah">▤ Data Wilayah <small>Cari dan ekspor</small></button>
 <button class="nav" data-page="impor">⇧ Impor Data <small>Unggah CSV</small></button>
 <button class="nav" data-page="laporan">▧ Insight & Laporan <small>Kesimpulan otomatis</small></button>
@@ -82,6 +83,19 @@ footer{font-size:11px;color:var(--muted);padding:20px 0 5px}
 <div class="grid two"><div class="panel"><h3>Elbow Method — K-Means</h3><div id="elbowChart" class="chart"></div><p class="small">WSS/inertia lebih rendah berarti anggota cluster lebih dekat ke centroid. Pilih “siku” dengan mempertimbangkan konteks, bukan angka saja.</p></div><div class="panel"><h3>Silhouette Score</h3><div id="silChart" class="chart"></div><p class="small">Rentang -1 sampai 1. Lebih tinggi biasanya menunjukkan cluster lebih terpisah; skor harus dibaca hati-hati pada data kecil.</p></div></div>
 <div class="panel"><h3>Skor model saat ini</h3><div id="evalTable" class="tablewrap"></div></div>
 <div class="notice">Silhouette adalah evaluasi internal, bukan bukti bahwa kelompok merupakan kategori sosial yang benar. Karena hanya tersedia 18 kelurahan dan dua indikator agregat, hasil bersifat eksploratif. Tidak ada target berlabel untuk menghitung accuracy, precision, recall, atau F1.</div>
+</section>
+<section id="regresi" class="page">
+<h2>Linear Regression</h2><p class="desc">Model regresi linear sederhana untuk menganalisis hubungan BPNT (X) dengan PKH (Y). Hasil ini eksploratif dan bukan bukti sebab-akibat.</p>
+<div class="notice">Data hanya 18 kelurahan. Pengujian memakai pembagian data 70% training dan 30% testing yang diacak secara deterministik agar hasil dapat diulang. Dengan sampel kecil, skor dapat berubah jika data atau pembagian berbeda.</div>
+<div class="grid cards">
+<div class="card"><div class="metric-label">Persamaan model</div><div class="metric" id="lrEquation" style="font-size:17px">—</div></div>
+<div class="card"><div class="metric-label">MAE (data test)</div><div class="metric" id="lrMAE">—</div></div>
+<div class="card"><div class="metric-label">RMSE (data test)</div><div class="metric" id="lrRMSE">—</div></div>
+<div class="card"><div class="metric-label">R² (data test)</div><div class="metric" id="lrR2">—</div></div>
+</div>
+<div class="grid two"><div class="panel"><h3>Aktual vs estimasi pada data test</h3><div id="lrChart" class="chart"></div></div><div class="panel"><h3>Interpretasi model</h3><div id="lrInsight"></div></div></div>
+<div class="panel"><h3>Hasil training dan testing</h3><div id="lrTable" class="tablewrap"></div></div>
+<div class="panel"><h3>Model akhir pada seluruh data</h3><p id="lrFullEquation"></p><p class="small">Model akhir dihitung dari seluruh baris untuk mendeskripsikan pola data yang tersedia. Metrik MAE, RMSE, dan R² di atas dihitung hanya pada data test agar evaluasi tidak menggunakan data training.</p></div>
 </section>
 <section id="wilayah" class="page">
 <h2>Data Wilayah</h2><p class="desc">Cari data, tinjau nilai sumber, dan ekspor data hasil preprocessing.</p>
@@ -236,10 +250,42 @@ function renderEvaluation(){
  $('silChart').innerHTML=barChart([{label:'K-Means',value:Number.isFinite(sk)?sk:0},{label:'Hierarchical',value:Number.isFinite(sh)?sh:0}].map(x=>({...x,value:x.value})), '#3979bd',10);
  $('evalTable').innerHTML=`<table><thead><tr><th>Model</th><th>K</th><th>Silhouette Score</th><th>Inertia/WSS</th><th>Catatan</th></tr></thead><tbody><tr><td>K-Means</td><td>${K}</td><td>${Number.isFinite(sk)?sk.toFixed(4):'Tidak terdefinisi'}</td><td>${inertia(pts,km).toFixed(4)}</td><td>Meminimalkan jarak ke centroid</td></tr><tr><td>Agglomerative Hierarchical (single-link)</td><td>${K}</td><td>${Number.isFinite(sh)?sh.toFixed(4):'Tidak terdefinisi'}</td><td>—</td><td>Menggabungkan cluster berdasarkan jarak minimum</td></tr></tbody></table><p class="small">Silhouette K-Means ${Number.isFinite(sk)?sk.toFixed(3):'tidak tersedia'}; Hierarchical ${Number.isFinite(sh)?sh.toFixed(3):'tidak tersedia'}. Nilai silhouette negatif dapat menunjukkan anggota lebih dekat ke cluster lain.</p>`;
 }
+function fitLinear(rows){
+ const n=rows.length;if(n<2)return {a:0,b:0};
+ const mx=mean(rows.map(d=>d.bpnt)),my=mean(rows.map(d=>d.pkh));
+ const den=sum(rows,d=>(d.bpnt-mx)**2);
+ const b=den?sum(rows,d=>(d.bpnt-mx)*(d.pkh-my))/den:0;
+ return {a:my-b*mx,b};
+}
+function regressionPrediction(model,x){return model.a+model.b*x}
+function renderRegression(){
+ const rows=data.filter(d=>Number.isFinite(d.bpnt)&&Number.isFinite(d.pkh));
+ if(rows.length<4){$('lrInsight').textContent='Diperlukan minimal 4 baris data valid untuk training dan testing.';return}
+ // Pengacakan deterministik berdasarkan nama wilayah, supaya pembagian berulang konsisten.
+ const shuffled=[...rows].sort((a,b)=>{const hash=s=>{let h=2166136261;for(const c of s)h=Math.imul(h^c.charCodeAt(0),16777619);return h>>>0};return hash(a.kelurahan)-hash(b.kelurahan)});
+ const nTrain=Math.max(2,Math.min(rows.length-1,Math.floor(rows.length*.7)));
+ const train=shuffled.slice(0,nTrain),test=shuffled.slice(nTrain);
+ const model=fitLinear(train),preds=test.map(d=>({d,p:regressionPrediction(model,d.bpnt)}));
+ const mae=mean(preds.map(o=>Math.abs(o.d.pkh-o.p)));
+ const rmse=Math.sqrt(mean(preds.map(o=>(o.d.pkh-o.p)**2)));
+ const ybar=mean(test.map(d=>d.pkh));
+ const sse=sum(preds,o=>(o.d.pkh-o.p)**2),sst=sum(test,d=>(d.pkh-ybar)**2);
+ const r2=sst===0?NaN:1-sse/sst;
+ $('lrEquation').textContent=`PKH = ${fmt(model.a)} ${model.b<0?'−':'+'} ${fmt(Math.abs(model.b))} × BPNT`;
+ $('lrMAE').textContent=fmt(mae);$('lrRMSE').textContent=fmt(rmse);$('lrR2').textContent=Number.isFinite(r2)?r2.toFixed(3):'N/A';
+ $('lrFullEquation').textContent=(()=>{const f=fitLinear(rows);return `PKH = ${fmt(f.a)} ${f.b<0?'−':'+'} ${fmt(Math.abs(f.b))} × BPNT`})();
+ const chartRows=preds.map(o=>({label:o.d.kelurahan,value:Math.abs(o.d.pkh-o.p)})).sort((a,b)=>b.value-a.value);
+ $('lrChart').innerHTML=barChart(chartRows,'#3979bd',test.length);
+ const corrModel=fitLinear(rows),corrX=mean(rows.map(d=>d.bpnt)),corrY=mean(rows.map(d=>d.pkh));
+ const cov=sum(rows,d=>(d.bpnt-corrX)*(d.pkh-corrY)),vx=sum(rows,d=>(d.bpnt-corrX)**2),vy=sum(rows,d=>(d.pkh-corrY)**2),r=vx&&vy?cov/Math.sqrt(vx*vy):NaN;
+ $('lrInsight').innerHTML=`<p>Jumlah data valid: <b>${rows.length}</b> kelurahan.</p><p>Training: <b>${train.length}</b> baris (${Math.round(train.length/rows.length*100)}%); testing: <b>${test.length}</b> baris (${Math.round(test.length/rows.length*100)}%).</p><p>Kemiringan model training: <b>${fmt(model.b)}</b>. ${model.b>=0?'Pada data training, nilai BPNT yang lebih tinggi berkaitan dengan estimasi PKH yang lebih tinggi.':'Pada data training, nilai BPNT yang lebih tinggi berkaitan dengan estimasi PKH yang lebih rendah.'}</p><p>Korelasi pada seluruh data: <b>${Number.isFinite(r)?r.toFixed(3):'N/A'}</b>.</p><p>MAE menunjukkan rata-rata kesalahan absolut, RMSE memberi penalti lebih besar pada kesalahan besar, dan R² menunjukkan proporsi variasi data test yang dijelaskan model relatif terhadap baseline rata-rata.</p><p class="small">Ini hanya hubungan statistik agregat. Jangan menyimpulkan BPNT menyebabkan perubahan PKH atau menggunakan estimasi untuk menentukan kelayakan penerima.</p>`;
+ $('lrTable').innerHTML=`<table><thead><tr><th>Kelurahan</th><th>Kelompok</th><th>BPNT (X)</th><th>PKH aktual</th><th>PKH estimasi</th><th>Galat</th></tr></thead><tbody>${[...train.map(d=>({d,p:regressionPrediction(model,d.bpnt),group:'Training'})),...preds.map(o=>({...o,group:'Testing'}))].map(o=>`<tr><td>${esc(o.d.kelurahan)}</td><td><span class="pill">${o.group}</span></td><td>${fmt(o.d.bpnt)}</td><td>${fmt(o.d.pkh)}</td><td>${fmt(o.p)}</td><td>${fmt(o.d.pkh-o.p)}</td></tr>`).join('')}</tbody></table>`;
+}
 function makeReport(){
  const sp=sum(data,d=>d.pkh),sb=sum(data,d=>d.bpnt),sorted=[...data].sort((a,b)=>total(b)-total(a)),top=sorted[0],low=sorted[sorted.length-1];
  let s=`ANALISIS SEBARAN PENERIMA BANTUAN SOSIAL BERDASARKAN WILAYAH DI KOTA TANJUNGPINANG TAHUN 2025\n\nDATA\nDataset berisi ${data.length} baris kelurahan. Total agregat PKH: ${fmt(sp)}. Total agregat BPNT: ${fmt(sb)}. Total penjumlahan kedua program: ${fmt(sp+sb)}. Angka ini adalah agregat nilai data dan tidak boleh disebut jumlah penerima unik tanpa verifikasi definisi data.\n\nEDA DAN PREPROCESSING\nData diperiksa untuk nilai kosong, duplikasi pasangan kecamatan-kelurahan, serta outlier menggunakan aturan IQR. Outlier tidak otomatis dihapus. Fitur PKH dan BPNT distandardisasi sebelum clustering agar perbedaan skala tidak mendominasi jarak.\n\nTEMUAN DESKRIPTIF\nNilai gabungan tertinggi dalam data: ${top.kelurahan} (${top.kecamatan}), ${fmt(total(top))}. Nilai gabungan terendah: ${low.kelurahan} (${low.kecamatan}), ${fmt(total(low))}. Ini menggambarkan jumlah agregat tercatat, bukan tingkat kemiskinan atau kelayakan.\n`;
  if(modelResults){let {pts,K,km,hi}=modelResults,sk=silhouette(pts,km),sh=silhouette(pts,hi);s+=`\nMODELING PROJECT 2\nAlgoritma 1: K-Means dengan K=${K}, fitur ${modelResults.feature}, menggunakan fitur terstandardisasi. Silhouette Score: ${Number.isFinite(sk)?sk.toFixed(4):'tidak tersedia'}; inertia: ${inertia(pts,km).toFixed(4)}.\nAlgoritma 2: Agglomerative Hierarchical Clustering (single-link), K=${K}. Silhouette Score: ${Number.isFinite(sh)?sh.toFixed(4):'tidak tersedia'}.\nEvaluasi clustering menggunakan Silhouette Score dan Elbow/inertia. Karena ini unsupervised learning tanpa label target, train/test dan metrik accuracy tidak diterapkan seperti pada klasifikasi. Cluster bersifat eksploratif dan tidak menetapkan kelayakan individu.\n`}
+ const lr=fitLinear(data.filter(d=>Number.isFinite(d.bpnt)&&Number.isFinite(d.pkh))); s+=`\nLINEAR REGRESSION (ANALISIS TAMBAHAN)\nModel deskriptif seluruh data: PKH = ${fmt(lr.a)} ${lr.b<0?'−':'+'} ${fmt(Math.abs(lr.b))} x BPNT. Model ini menunjukkan asosiasi pada data agregat, bukan sebab-akibat. Metrik pengujian tersedia pada tab Linear Regression.\n`;
  s+=`\nREKOMENDASI\n1. Validasi definisi variabel, periode, dan satuan pada data sumber sebelum menyebut jumlah penerima.\n2. Tambahkan indikator relevan tingkat kelurahan (misalnya penduduk, kemiskinan, pendidikan atau kesehatan) jika tersedia dan sah digunakan.\n3. Tinjau wilayah beragregat tinggi/rendah dengan petugas terkait; jangan gunakan hasil cluster sebagai keputusan otomatis.\n4. Bandingkan beberapa nilai K dan interpretasikan profil setiap cluster bersama konteks lokal.\n5. Dokumentasikan proses cleaning, parameter model, skor evaluasi, serta keterbatasan jumlah observasi.\n\nKETERBATASAN\nData hanya mencakup ${data.length} kelurahan dan dua indikator agregat. Temuan bersifat deskriptif/eksploratif, tidak membuktikan sebab-akibat, tidak menunjukkan penerima unik, dan tidak dapat memprediksi kelayakan individu.`;
  return s;
 }
@@ -278,8 +324,8 @@ async function importCSV(){
  data=newData;fillDistrictFilter();renderAll();$('importMsg').innerHTML=`<div class="notice success">Berhasil memuat ${data.length} baris. Jalankan kembali model untuk memperbarui cluster.</div>`;
  }catch(e){$('importMsg').innerHTML=`<div class="notice bad">${esc(e.message)}</div>`}
 }
-function renderAll(){renderDashboard();renderEDA();renderDataTable();runModels();renderReport()}
-document.querySelectorAll('.nav').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===b.dataset.page));if(b.dataset.page==='evaluasi')renderEvaluation()}));
+function renderAll(){renderDashboard();renderEDA();renderDataTable();runModels();renderRegression();renderReport()}
+document.querySelectorAll('.nav').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===b.dataset.page));if(b.dataset.page==='evaluasi')renderEvaluation();if(b.dataset.page==='regresi')renderRegression()}));
 $('filterKec').addEventListener('change',renderDashboard);$('filterJenis').addEventListener('change',renderDashboard);
 $('searchData').addEventListener('input',renderDataTable);$('runModels').addEventListener('click',()=>{runModels();renderReport()});
 $('exportCsv').addEventListener('click',()=>exportCSV(false));$('exportClusters').addEventListener('click',()=>{if(!modelResults)runModels();exportCSV(true)});
